@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"sort"
 	"strconv"
 	"time"
 
@@ -32,7 +33,7 @@ type ProductsResponse struct {
 }
 
 type StockAdjustmentRequest struct {
-	Type string `json:"type"` // "in" atau "out"
+	Type string `json:"type"`
 	Qty  int    `json:"qty"`
 	Note string `json:"note"`
 }
@@ -44,6 +45,34 @@ type StockMovement struct {
 	Qty       int       `json:"qty"`
 	Note      string    `json:"note"`
 	CreatedAt time.Time `json:"created_at"`
+}
+
+type OrderItemRequest struct {
+	SKU string `json:"sku"`
+	Qty int    `json:"qty"`
+}
+
+type CreateOrderRequest struct {
+	Customer string             `json:"customer"`
+	Items    []OrderItemRequest `json:"items"`
+}
+
+type OrderItemResponse struct {
+	ID        int    `json:"id"`
+	SKU       string `json:"sku"`
+	Qty       int    `json:"qty"`
+	UnitPrice int    `json:"unit_price"`
+	Subtotal  int    `json:"subtotal"`
+}
+
+type SalesOrderResponse struct {
+	ID          int                 `json:"id"`
+	Customer    string              `json:"customer"`
+	Status      string              `json:"status"`
+	Total       int                 `json:"total"`
+	CreatedAt   time.Time           `json:"created_at"`
+	CancelledAt *time.Time          `json:"cancelled_at"`
+	Items       []OrderItemResponse `json:"items,omitempty"`
 }
 
 var db *sql.DB
@@ -64,10 +93,14 @@ func main() {
 
 	r := chi.NewRouter()
 
-	// Endpoint Produk & Stok
+	// Endpoints Produk & Stok
 	r.Get("/api/products", getProductsHandler)
 	r.Post("/api/products/{id}/stock", adjustStockHandler)
 	r.Get("/api/products/{id}/movements", getMovementsHandler)
+
+	// Endpoints Sales Order
+	r.Post("/api/orders", createOrderHandler)
+	r.Get("/api/orders", getOrdersHandler)
 
 	fmt.Println("Backend server berjalan di http://localhost:8080")
 	log.Fatal(http.ListenAndServe(":8080", r))
@@ -146,7 +179,6 @@ func adjustStockHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Validasi input
 	if req.Qty <= 0 {
 		http.Error(w, "Quantity must be greater than 0", http.StatusBadRequest)
 		return
@@ -156,7 +188,6 @@ func adjustStockHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Buka Transaksi Atomik
 	tx, err := db.BeginTx(r.Context(), nil)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -164,7 +195,6 @@ func adjustStockHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	defer tx.Rollback()
 
-	// Kunci baris produk dengan SELECT ... FOR UPDATE
 	var currentStock int
 	err = tx.QueryRowContext(r.Context(), "SELECT stock FROM products WHERE id = $1 FOR UPDATE", productID).Scan(&currentStock)
 	if err == sql.ErrNoRows {
@@ -175,14 +205,13 @@ func adjustStockHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Perhitungan stok baru & validasi overdraw
 	var newStock int
 	if req.Type == "in" {
 		newStock = currentStock + req.Qty
 	} else {
 		if currentStock < req.Qty {
 			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusConflict) // 409
+			w.WriteHeader(http.StatusConflict)
 			json.NewEncoder(w).Encode(map[string]interface{}{
 				"error": map[string]interface{}{
 					"code":      "INSUFFICIENT_STOCK",
@@ -194,14 +223,12 @@ func adjustStockHandler(w http.ResponseWriter, r *http.Request) {
 		newStock = currentStock - req.Qty
 	}
 
-	// Update stok produk
 	_, err = tx.ExecContext(r.Context(), "UPDATE products SET stock = $1 WHERE id = $2", newStock, productID)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
-	// Tulis log ke tabel stock_movements
 	_, err = tx.ExecContext(r.Context(), "INSERT INTO stock_movements (product_id, type, qty, note) VALUES ($1, $2, $3, $4)",
 		productID, req.Type, req.Qty, req.Note)
 	if err != nil {
@@ -250,5 +277,184 @@ func getMovementsHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"data": movements,
+	})
+}
+
+func createOrderHandler(w http.ResponseWriter, r *http.Request) {
+	var req CreateOrderRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	if req.Customer == "" || len(req.Items) == 0 {
+		http.Error(w, "Customer and items are required", http.StatusBadRequest)
+		return
+	}
+
+	// Gabungkan kuantitas untuk SKU duplikat jika ada di dalam satu request
+	itemMap := make(map[string]int)
+	for _, item := range req.Items {
+		if item.Qty <= 0 {
+			http.Error(w, "Quantity must be greater than 0", http.StatusBadRequest)
+			return
+		}
+		itemMap[item.SKU] += item.Qty
+	}
+
+	// Urutkan SKU untuk mencegah database deadlock saat multi-user memesan bersamaan
+	skus := make([]string, 0, len(itemMap))
+	for sku := range itemMap {
+		skus = append(skus, sku)
+	}
+	sort.Strings(skus)
+
+	// Buka Transaksi Atomik
+	tx, err := db.BeginTx(r.Context(), nil)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	defer tx.Rollback()
+
+	type lockedProduct struct {
+		id    int
+		sku   string
+		price int
+		stock int
+	}
+
+	lockedItems := make(map[string]lockedProduct)
+	totalOrder := 0
+
+	for _, sku := range skus {
+		reqQty := itemMap[sku]
+		var lp lockedProduct
+
+		// Kunci baris produk dengan SELECT ... FOR UPDATE
+		query := `SELECT id, sku, price, stock, is_active FROM products WHERE sku = $1 FOR UPDATE`
+		var isActive bool
+		err := tx.QueryRowContext(r.Context(), query, sku).Scan(&lp.id, &lp.sku, &lp.price, &lp.stock, &isActive)
+		if err == sql.ErrNoRows {
+			http.Error(w, fmt.Sprintf("Product %s not found", sku), http.StatusNotFound)
+			return
+		} else if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		if !isActive {
+			http.Error(w, fmt.Sprintf("Product %s is inactive", sku), http.StatusBadRequest)
+			return
+		}
+
+		// Validasi ketersediaan stok
+		if lp.stock < reqQty {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusConflict) // 409
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"error": map[string]interface{}{
+					"code":      "INSUFFICIENT_STOCK",
+					"sku":       sku,
+					"requested": reqQty,
+					"available": lp.stock,
+				},
+			})
+			return
+		}
+
+		lockedItems[sku] = lp
+		totalOrder += lp.price * reqQty
+	}
+
+	// 1. Simpan Sales Order header
+	var orderID int
+	orderQuery := `INSERT INTO sales_orders (customer, status, total) VALUES ($1, 'CREATED', $2) RETURNING id`
+	if err := tx.QueryRowContext(r.Context(), orderQuery, req.Customer, totalOrder).Scan(&orderID); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// 2. Simpan order items, kurangi stok, dan catat mutasi keluar
+	respItems := []OrderItemResponse{}
+	for _, sku := range skus {
+		reqQty := itemMap[sku]
+		lp := lockedItems[sku]
+
+		_, err = tx.ExecContext(r.Context(),
+			`INSERT INTO sales_order_items (order_id, sku, qty, unit_price) VALUES ($1, $2, $3, $4)`,
+			orderID, sku, reqQty, lp.price)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		newStock := lp.stock - reqQty
+		_, err = tx.ExecContext(r.Context(), `UPDATE products SET stock = $1 WHERE id = $2`, newStock, lp.id)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		orderNote := fmt.Sprintf("Sales Order #%d", orderID)
+		_, err = tx.ExecContext(r.Context(),
+			`INSERT INTO stock_movements (product_id, type, qty, note) VALUES ($1, 'out', $2, $3)`,
+			lp.id, reqQty, orderNote)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		respItems = append(respItems, OrderItemResponse{
+			SKU:       sku,
+			Qty:       reqQty,
+			UnitPrice: lp.price,
+			Subtotal:  lp.price * reqQty,
+		})
+	}
+
+	// Commit transaksi
+	if err := tx.Commit(); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"id":       orderID,
+		"customer": req.Customer,
+		"status":   "CREATED",
+		"total":    totalOrder,
+		"items":    respItems,
+	})
+}
+
+func getOrdersHandler(w http.ResponseWriter, r *http.Request) {
+	query := `
+		SELECT id, customer, status, total, created_at, cancelled_at
+		FROM sales_orders
+		ORDER BY id DESC
+	`
+	rows, err := db.QueryContext(r.Context(), query)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	defer rows.Close()
+
+	orders := []SalesOrderResponse{}
+	for rows.Next() {
+		var o SalesOrderResponse
+		if err := rows.Scan(&o.ID, &o.Customer, &o.Status, &o.Total, &o.CreatedAt, &o.CancelledAt); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		orders = append(orders, o)
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"data": orders,
 	})
 }

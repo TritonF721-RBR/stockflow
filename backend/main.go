@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"os"
 	"sort"
 	"strconv"
 	"time"
@@ -94,7 +95,11 @@ func corsMiddleware(next http.Handler) http.Handler {
 
 func main() {
 	var err error
-	connStr := "host=localhost port=5432 user=postgres password=password dbname=stockflow sslmode=disable"
+	dbHost := os.Getenv("DB_HOST")
+	if dbHost == "" {
+		dbHost = "localhost"
+	}
+	connStr := fmt.Sprintf("host=%s port=5432 user=postgres password=password dbname=stockflow sslmode=disable", dbHost)
 	db, err = sql.Open("postgres", connStr)
 	if err != nil {
 		log.Fatal(err)

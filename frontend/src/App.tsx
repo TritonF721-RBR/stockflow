@@ -70,7 +70,7 @@ export default function App() {
 
       if (!res.ok) {
         const errorData = await res.json();
-        alert(`Gagal: ${errorData.error?.code || 'Terjadi kesalahan sistem'}`);
+        alert(`Failed: ${errorData.error?.code || 'System error occurred'}`);
         return;
       }
 
@@ -79,7 +79,7 @@ export default function App() {
       setAdjNote('');
       fetchProducts();
     } catch (err) {
-      alert('Gagal menghubungi server.');
+      alert('Failed to reach the server.');
     }
   };
 
@@ -89,7 +89,7 @@ export default function App() {
       const data = await res.json();
       setMovementModal({ open: true, product, items: data.data || [] });
     } catch (err) {
-      alert('Gagal mengambil data mutasi.');
+      alert('Failed to retrieve movement history.');
     }
   };
 
@@ -98,7 +98,7 @@ export default function App() {
     try {
       const validItems = orderItems.filter((i) => i.sku && i.qty > 0);
       if (!customerName || validItems.length === 0) {
-        alert('Harap isi nama pembeli dan pilih minimal satu barang.');
+        alert('Please provide a customer name and at least one item.');
         return;
       }
 
@@ -110,7 +110,7 @@ export default function App() {
 
       if (!res.ok) {
         const err = await res.json();
-        alert(`Pesanan Ditolak: ${err.error?.code} (SKU: ${err.error?.sku})`);
+        alert(`Order Rejected: ${err.error?.code} (SKU: ${err.error?.sku})`);
         return;
       }
 
@@ -120,12 +120,12 @@ export default function App() {
       fetchOrders();
       fetchProducts();
     } catch (err) {
-      alert('Gagal menghubungi server.');
+      alert('Failed to reach the server.');
     }
   };
 
   const handleCancelOrder = async (orderId: number) => {
-    if (!confirm(`Batalkan Sales Order #${orderId}? Stok akan otomatis dikembalikan.`)) return;
+    if (!confirm(`Cancel Sales Order #${orderId}? Reserved stock will be refunded automatically.`)) return;
 
     try {
       const res = await fetch(`${API_BASE}/orders/${orderId}/cancel`, { method: 'POST' });
@@ -133,7 +133,7 @@ export default function App() {
       fetchOrders();
       fetchProducts();
     } catch (err) {
-      alert('Gagal membatalkan pesanan.');
+      alert('Failed to cancel order.');
     }
   };
 
@@ -146,7 +146,7 @@ export default function App() {
         </div>
         <div className="nav-tabs">
           <button className={`tab-btn ${tab === 'products' ? 'active' : ''}`} onClick={() => setTab('products')}>
-            Katalog Produk & Stok
+            Product Catalog & Stock
           </button>
           <button className={`tab-btn ${tab === 'orders' ? 'active' : ''}`} onClick={() => setTab('orders')}>
             Sales Orders
@@ -159,7 +159,7 @@ export default function App() {
           <div className="toolbar">
             <input
               type="text"
-              placeholder="Cari SKU atau nama..."
+              placeholder="Search SKU or product name..."
               className="search-input"
               value={search}
               onChange={(e) => {
@@ -176,12 +176,12 @@ export default function App() {
             <thead>
               <tr>
                 <th>SKU</th>
-                <th>Nama Produk</th>
-                <th>Harga</th>
-                <th>Stok</th>
+                <th>Product Name</th>
+                <th>Price</th>
+                <th>Stock</th>
                 <th>Status</th>
-                <th>Mutasi Terakhir</th>
-                <th>Aksi</th>
+                <th>Last Movement</th>
+                <th>Actions</th>
               </tr>
             </thead>
             <tbody>
@@ -193,7 +193,7 @@ export default function App() {
                   <td><strong>{p.stock}</strong></td>
                   <td>
                     <span className={`badge ${p.is_active ? 'badge-active' : 'badge-inactive'}`}>
-                      {p.is_active ? 'Aktif' : 'Non-aktif'}
+                      {p.is_active ? 'Active' : 'Inactive'}
                     </span>
                   </td>
                   <td>{p.last_movement_at ? new Date(p.last_movement_at).toLocaleString() : '-'}</td>
@@ -203,10 +203,10 @@ export default function App() {
                         className="btn btn-sm btn-secondary"
                         onClick={() => setStockModal({ open: true, product: p })}
                       >
-                        Sesuaikan
+                        Adjust
                       </button>
                       <button className="btn btn-sm btn-secondary" onClick={() => handleViewMovements(p)}>
-                        <Eye size={12} /> Mutasi
+                        <Eye size={12} /> Movements
                       </button>
                     </div>
                   </td>
@@ -216,13 +216,13 @@ export default function App() {
           </table>
 
           <div className="pagination">
-            <span>Halaman {page} dari {Math.ceil(total / limit) || 1} (Total {total} produk)</span>
+            <span>Page {page} of {Math.ceil(total / limit) || 1} ({total} total products)</span>
             <div style={{ display: 'flex', gap: '6px' }}>
               <button className="btn btn-sm btn-secondary" disabled={page === 1} onClick={() => setPage(page - 1)}>
-                Sebelumnya
+                Previous
               </button>
               <button className="btn btn-sm btn-secondary" disabled={page * limit >= total} onClick={() => setPage(page + 1)}>
-                Selanjutnya
+                Next
               </button>
             </div>
           </div>
@@ -230,9 +230,9 @@ export default function App() {
       ) : (
         <div className="card">
           <div className="toolbar">
-            <h3 style={{ fontSize: '16px' }}>Daftar Sales Order</h3>
+            <h3 style={{ fontSize: '16px' }}>Sales Orders Directory</h3>
             <button className="btn" onClick={() => setOrderModal(true)}>
-              <Plus size={14} /> Buat Pesanan Baru
+              <Plus size={14} /> New Sales Order
             </button>
           </div>
 
@@ -240,11 +240,11 @@ export default function App() {
             <thead>
               <tr>
                 <th>Order ID</th>
-                <th>Pelanggan</th>
+                <th>Customer</th>
                 <th>Status</th>
-                <th>Total Nilai</th>
-                <th>Dibuat Tanggal</th>
-                <th>Aksi</th>
+                <th>Total Amount</th>
+                <th>Created At</th>
+                <th>Actions</th>
               </tr>
             </thead>
             <tbody>
@@ -262,7 +262,7 @@ export default function App() {
                   <td>
                     {o.status === 'CREATED' && (
                       <button className="btn btn-sm btn-danger" onClick={() => handleCancelOrder(o.id)}>
-                        Batalkan
+                        Cancel
                       </button>
                     )}
                   </td>
@@ -273,21 +273,21 @@ export default function App() {
         </div>
       )}
 
-      {/* MODAL PENYESUAIAN STOK */}
+      {/* MODAL ADJUST STOCK */}
       {stockModal.open && stockModal.product && (
         <div className="modal-backdrop">
           <div className="modal-content">
-            <h3 style={{ marginBottom: '16px' }}>Sesuaikan Stok: {stockModal.product.name}</h3>
+            <h3 style={{ marginBottom: '16px' }}>Adjust Stock: {stockModal.product.name}</h3>
             <form onSubmit={handleAdjustStock}>
               <div className="form-group">
-                <label>Tipe Penyesuaian</label>
+                <label>Adjustment Type</label>
                 <select value={adjType} onChange={(e) => setAdjType(e.target.value as 'in' | 'out')}>
-                  <option value="in">Masuk (Restock / In)</option>
-                  <option value="out">Keluar (Write-off / Out)</option>
+                  <option value="in">Inbound (Restock / In)</option>
+                  <option value="out">Outbound (Write-off / Out)</option>
                 </select>
               </div>
               <div className="form-group">
-                <label>Kuantitas</label>
+                <label>Quantity</label>
                 <input
                   type="number"
                   min="1"
@@ -297,10 +297,10 @@ export default function App() {
                 />
               </div>
               <div className="form-group">
-                <label>Catatan</label>
+                <label>Note / Reason</label>
                 <input
                   type="text"
-                  placeholder="Misal: Penyesuaian stok rusak"
+                  placeholder="e.g., Damaged item write-off"
                   value={adjNote}
                   onChange={(e) => setAdjNote(e.target.value)}
                   required
@@ -308,10 +308,10 @@ export default function App() {
               </div>
               <div className="modal-footer">
                 <button type="button" className="btn btn-secondary" onClick={() => setStockModal({ open: false, product: null })}>
-                  Tutup
+                  Close
                 </button>
                 <button type="submit" className="btn">
-                  Simpan Perubahan
+                  Apply Adjustment
                 </button>
               </div>
             </form>
@@ -319,19 +319,19 @@ export default function App() {
         </div>
       )}
 
-      {/* MODAL RIWAYAT MUTASI */}
+      {/* MODAL MOVEMENT HISTORY */}
       {movementModal.open && movementModal.product && (
         <div className="modal-backdrop">
           <div className="modal-content" style={{ maxWidth: '650px' }}>
-            <h3 style={{ marginBottom: '16px' }}>Riwayat Mutasi: {movementModal.product.name}</h3>
+            <h3 style={{ marginBottom: '16px' }}>Movement History: {movementModal.product.name}</h3>
             <div style={{ maxHeight: '350px', overflowY: 'auto' }}>
               <table>
                 <thead>
                   <tr>
-                    <th>Tipe</th>
-                    <th>Jumlah</th>
-                    <th>Keterangan</th>
-                    <th>Waktu</th>
+                    <th>Type</th>
+                    <th>Qty</th>
+                    <th>Note / Reference</th>
+                    <th>Timestamp</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -352,24 +352,24 @@ export default function App() {
             </div>
             <div className="modal-footer">
               <button className="btn btn-secondary" onClick={() => setMovementModal({ open: false, product: null, items: [] })}>
-                Tutup
+                Close
               </button>
             </div>
           </div>
         </div>
       )}
 
-      {/* MODAL PEMBUATAN SALES ORDER */}
+      {/* MODAL CREATE SALES ORDER */}
       {orderModal && (
         <div className="modal-backdrop">
           <div className="modal-content">
-            <h3 style={{ marginBottom: '16px' }}>Buat Sales Order Baru</h3>
+            <h3 style={{ marginBottom: '16px' }}>Create Sales Order</h3>
             <form onSubmit={handleCreateOrder}>
               <div className="form-group">
-                <label>Nama Pelanggan</label>
+                <label>Customer Name</label>
                 <input
                   type="text"
-                  placeholder="Nama Pelanggan / Outlet"
+                  placeholder="e.g., Nusantara Coffee Roasters"
                   value={customerName}
                   onChange={(e) => setCustomerName(e.target.value)}
                   required
@@ -377,7 +377,7 @@ export default function App() {
               </div>
 
               <div style={{ marginBottom: '12px' }}>
-                <label style={{ fontSize: '13px', fontWeight: 600 }}>Rincian Barang</label>
+                <label style={{ fontSize: '13px', fontWeight: 600 }}>Order Items</label>
                 {orderItems.map((item, idx) => (
                   <div key={idx} style={{ display: 'flex', gap: '8px', marginTop: '8px' }}>
                     <select
@@ -390,10 +390,10 @@ export default function App() {
                       }}
                       required
                     >
-                      <option value="">Pilih Produk (SKU)</option>
+                      <option value="">Select Product (SKU)</option>
                       {products.map((p) => (
                         <option key={p.id} value={p.sku}>
-                          {p.sku} - {p.name} (Stok: {p.stock})
+                          {p.sku} - {p.name} (Stock: {p.stock})
                         </option>
                       ))}
                     </select>
@@ -419,15 +419,15 @@ export default function App() {
                 style={{ marginBottom: '16px' }}
                 onClick={() => setOrderItems([...orderItems, { sku: '', qty: 1 }])}
               >
-                + Tambah Item
+                + Add Item
               </button>
 
               <div className="modal-footer">
                 <button type="button" className="btn btn-secondary" onClick={() => setOrderModal(false)}>
-                  Batal
+                  Cancel
                 </button>
                 <button type="submit" className="btn">
-                  Proses Pesanan
+                  Submit Order
                 </button>
               </div>
             </form>
